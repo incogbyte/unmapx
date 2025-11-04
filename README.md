@@ -3,7 +3,7 @@
 [![npm version](https://badge.fury.io/js/unmapx.svg)](https://www.npmjs.com/package/unmapx)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-> Extract and unpack JavaScript source maps from files, URLs, or inline base64. Supports indexed source maps, URL extraction, and cross-platform filename sanitization.
+> Extract and unpack JavaScript source maps from files, URLs, or inline base64. Supports indexed source maps, URL extraction.
 
 ## Table of Contents
 
@@ -23,11 +23,16 @@
 - **URL Extraction**: Extract and display all URLs found in extracted source files
 - **Webpack/Rollup Compatible**: Handles format variations from different bundlers
 - **Flexible Output**: Organize output by source map or merge into single directory
+- **Developer Experience**: Verbose and quiet modes for different use cases
 
 ## Installation
 
 ```bash
 npm install -g unmapx
+
+or 
+
+npm install -g unmapx --ignore-scripts
 ```
 
 Or use locally without installation:
@@ -182,15 +187,6 @@ unmapx automatically detects and processes indexed source maps (format with `sec
 unmapx -V indexed-source-map.js.map
 # Verbose mode will show: "Detected indexed source map format"
 ```
-
-### Smart Filename Sanitization
-
-The tool includes intelligent filename sanitization that:
-- Handles Windows reserved names (CON, PRN, AUX, etc.)
-- Removes invalid characters per platform
-- Prevents path traversal attacks
-- Truncates overly long filenames while preserving extensions
-- Normalizes Unicode characters
 
 ### Base64-Encoded Source Maps
 
