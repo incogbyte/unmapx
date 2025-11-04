@@ -229,3 +229,7 @@ Handles various format variations:
 Copyright © 2024 Rodolfo 'incogbyte' Tavares
 
 Licensed under the [MIT License](https://opensource.org/licenses/MIT).
+
+## Thanks 
+@s4int
+@chbrown/unmap
