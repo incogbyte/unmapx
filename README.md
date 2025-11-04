@@ -21,10 +21,8 @@
 - **Multiple Source Map Formats**: Supports direct `.map` files, inline source maps, base64-encoded maps, and indexed source maps
 - **URL Downloads**: Download source maps from HTTP/HTTPS URLs with automatic format detection
 - **URL Extraction**: Extract and display all URLs found in extracted source files
-- **Cross-Platform**: Smart filename sanitization for Windows, macOS, and Linux
 - **Webpack/Rollup Compatible**: Handles format variations from different bundlers
 - **Flexible Output**: Organize output by source map or merge into single directory
-- **Developer Experience**: Verbose and quiet modes for different use cases
 
 ## Installation
 
