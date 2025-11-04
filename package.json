@@ -11,5 +11,15 @@
   },
   "bin": {
     "unmapx": "bin/unmapx"
-  }
+  },
+  "scripts": {
+    "postinstall": "node scripts/postinstall.js"
+  },
+  "files": [
+    "bin/",
+    "scripts/",
+    "index.js",
+    "package.json",
+    "README.md"
+  ]
 }
