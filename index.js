@@ -330,10 +330,19 @@ async function dumpSource(source, sourceContent, sourceRoot, dirpath, options = 
       throw new Error(`Missing source content for: ${source}`)
     }
   }
-  
-  const safeSource = sanitizeFilename(source, options)
-  const sourcePath = path.normalize(safeSource)
-  const sourceFilepath = path.join(dirpath, sourceRoot, sourcePath)
+
+  // Normalize the source path to handle relative paths like ../node_modules/...
+  // Split by path separator, sanitize each component, then rejoin
+  const pathParts = source.split(/[/\\]/).filter(part => part && part !== '.')
+  const sanitizedParts = pathParts.map(part => {
+    if (part === '..') {
+      return '__parent__'  // Replace .. with safe directory name
+    }
+    return sanitizeFilename(part, options)
+  })
+
+  const sourcePath = path.join(...sanitizedParts)
+  const sourceFilepath = path.join(dirpath, sourceRoot || '', sourcePath)
 
   if (options.verbose) {
     options.logger?.info(`Extracting: ${source} -> ${sourceFilepath}`)
