@@ -50,13 +50,7 @@ function sanitizeFilename(filename, options = {}) {
     sanitized = nameWithoutExt.substring(0, maxNameLength) + ext
   }
   
-  const normalized = path.normalize(sanitized)
-  
-  if (normalized.includes('..') || path.isAbsolute(normalized)) {
-    throw new Error(`Path traversal detected: ${filename}`)
-  }
-  
-  return normalized
+  return path.normalize(sanitized)
 }
 
 function extractInlineSourceMapUrl(sourceCode) {
