@@ -1,0 +1,320 @@
+#!/usr/bin/env node
+const path = require('path')
+
+const parseArgs = require('minimist')
+
+const {dumpFile, dumpMultipleFiles, extractLinksFromDirectory, createLogger, verifyMultipleUrls, downloadAllSourceMaps} = require('..')
+
+const argv = parseArgs(process.argv.slice(2), {
+  boolean: ['help', 'version', 'separate-dirs', 'continue-on-error', 'skip-missing', 'create-placeholders', 'extractlinks', 'verbose', 'quiet', 'verify', 'downloadall'],
+  string: ['output', 'sourceRoot', 'jsurl', 'url'],
+  alias: {
+    help: 'h',
+    version: 'v',
+    output: 'o',
+    jsurl: 'u',
+    extractlinks: 'el',
+    verbose: 'V',
+    quiet: 'q',
+    downloadall: 'da',
+  },
+  default: {
+    output: process.cwd(),
+  },
+})
+
+if (argv.help) {
+  console.log(`Usage: unmapx [options] <file> [file2 ...]
+
+Unpack JavaScript Source Maps back into a filesystem structure.
+
+Supports:
+  - Direct .map files
+  - JavaScript files with inline source maps (//# sourceMappingURL=...)
+  - Base64-encoded embedded source maps (data:application/json;base64,...)
+  - Indexed source maps (with sections)
+  - Webpack/Rollup format variations
+
+Files:
+  <file>              Source map file (.map), JavaScript file (.js/.mjs/.cjs),
+                      URL (http:// or https://), or '-' to read from stdin
+
+Options:
+  --help                  Print this help message
+  --version               Print version
+  --verify                Verify if JavaScript URLs contain source maps
+                            (reads URLs from stdin or arguments, one per line)
+  --downloadall, -da      Download and extract source maps from verified URLs
+                            (creates unmapx_output directory with domain subdirectories)
+  --jsurl, -u url         URL to JavaScript file - cannot be used with --url
+                            (extracts inline source map from JS file)
+  --url string            URL or path to the Sourcemap file - cannot be used with --jsurl
+                            (supports base64-encoded source maps)
+  --sourceRoot string     Override "sourceRoot" field
+  --output path           Output directory (default: current directory)
+  --extractlinks, -el      Extract and display URLs found in extracted files
+                            (requires --output to be explicitly specified)
+  --verbose, -V           Show detailed progress and debug information
+  --quiet, -q             Suppress all output except errors
+  --separate-dirs         Put each source map in its own subdirectory
+  --continue-on-error     Continue processing other files if one fails
+  --skip-missing          Skip sources with missing content instead of erroring
+  --create-placeholders   Create placeholder files for missing source content
+
+Examples:
+  unmapx bundle.js.map
+  unmapx bundle.js                                    # Extracts inline source map
+  unmapx app.js.map lib.js.map
+  unmapx --jsurl https://example.com/main.js          # Download JS file and extract inline source map
+  unmapx -u https://example.com/main.js -o foo        # Download JS file and output to foo/
+  unmapx --url https://example.com/main.js.map        # Download source map file directly
+  unmapx --url https://example.com/main.js.map -o foo # Download source map and output to foo/
+  unmapx -o extracted -el bundle.js.map              # Extract and show URLs found
+  unmapx -V bundle.js.map                            # Verbose mode (detailed output)
+  unmapx -q bundle.js.map                            # Quiet mode (errors only)
+  unmapx --separate-dirs *.map                        # Each map in its own directory
+  echo 'sourcemap' | unmapx -                         # Read from stdin
+  echo 'https://example.com/test.js' | unmapx -verify # Verify source map in URL
+  unmapx -verify https://example.com/test.js          # Verify source map in URL
+  cat urls.txt | unmapx -verify -da                   # Verify and download all source maps`)
+  process.exit(0)
+}
+
+if (argv.version) {
+  console.log(require('../package').version)
+  process.exit(0)
+}
+
+async function main() {
+  const logger = createLogger(argv.verbose, argv.quiet)
+  
+  // Handle --verify mode
+  if (argv.verify) {
+    let urls = argv._
+    
+    // Read URLs from stdin if available
+    if (!process.stdin.isTTY) {
+      const chunks = []
+      for await (const chunk of process.stdin) {
+        chunks.push(chunk)
+      }
+      const stdinData = Buffer.concat(chunks).toString('utf8')
+      const stdinUrls = stdinData
+        .split('\n')
+        .map(line => line.trim())
+        .filter(line => line && (line.startsWith('http://') || line.startsWith('https://')))
+      urls = urls.concat(stdinUrls)
+    }
+    
+    if (!urls.length) {
+      logger.error('Error: No URLs specified. Use --help for usage information.')
+      process.exit(1)
+    }
+    
+    // Remove duplicates
+    urls = [...new Set(urls)]
+    
+    if (argv.verbose) {
+      logger.info(`Verifying ${urls.length} URL(s) for source maps...`)
+    }
+    
+    const results = await verifyMultipleUrls(urls)
+    const urlsWithSourceMaps = results.filter(result => result.hasSourceMap).map(result => result.url)
+    
+    // Show found sourcemaps
+    for (const result of results) {
+      if (result.hasSourceMap) {
+        console.log(`[FOUND SM] ${result.url}`)
+      }
+    }
+    
+    // If --downloadall is specified, download the sourcemaps
+    if (argv.downloadall || argv.da) {
+      if (urlsWithSourceMaps.length === 0) {
+        logger.info('No source maps found to download')
+        return
+      }
+      
+      const outputDir = path.resolve(process.cwd(), 'unmapx_output')
+      logger.info(`Downloading source maps to: ${outputDir}`)
+      
+      const downloadOptions = {
+        verbose: argv.verbose,
+        quiet: argv.quiet,
+        logger: logger,
+        continueOnError: true,
+        skipMissing: argv['skip-missing'],
+        createPlaceholders: argv['create-placeholders'],
+      }
+      
+      const downloadResults = await downloadAllSourceMaps(urlsWithSourceMaps, outputDir, downloadOptions)
+      
+      let successCount = 0
+      let errorCount = 0
+      
+      for (const result of downloadResults) {
+        if (result.success) {
+          successCount++
+          if (argv.verbose) {
+            logger.info(`✓ Downloaded: ${result.url} -> ${result.domain}/`)
+          }
+        } else {
+          errorCount++
+          if (!argv.quiet) {
+            logger.error(`✗ Failed: ${result.url} - ${result.error}`)
+          }
+        }
+      }
+      
+      if (!argv.quiet) {
+        logger.info(`\nDownload complete: ${successCount} succeeded, ${errorCount} failed`)
+        logger.info(`Output directory: ${outputDir}`)
+      }
+    }
+    
+    return
+  }
+  
+  // Validate mutually exclusive options
+  if (argv.jsurl && argv.url) {
+    logger.error('Error: --jsurl and --url cannot be used together')
+    logger.error('Use --jsurl for JavaScript files or --url for source map files')
+    process.exit(1)
+  }
+  
+  let inputs = argv._
+  
+  // Handle --jsurl option (JavaScript file URL)
+  if (argv.jsurl) {
+    inputs = [argv.jsurl]
+    logger.info(`Downloading JavaScript file from: ${argv.jsurl}`)
+    logger.debug('Will extract inline source map from JavaScript file')
+  }
+  
+  // Handle --url option (Source map file URL or path)
+  if (argv.url) {
+    inputs = [argv.url]
+    logger.info(`Downloading source map from: ${argv.url}`)
+  }
+  
+  // Handle stdin
+  if (!inputs.length && !process.stdin.isTTY) {
+    logger.info('Reading source map from stdin')
+    inputs.push('-')
+  }
+  
+  if (!inputs.length) {
+    logger.error('Error: No input files specified. Use --help for usage information.')
+    process.exit(1)
+  }
+  
+  if (argv.extractlinks) {
+    const outputWasSpecified = process.argv.includes('--output') || process.argv.includes('-o')
+    if (!outputWasSpecified) {
+      logger.error('Error: --output is required when using --extractlinks')
+      logger.error('Please specify an output directory explicitly, e.g., --output ./extracted')
+      process.exit(1)
+    }
+  }
+  
+  const outputDir = path.resolve(argv.output)
+  logger.debug(`Output directory: ${outputDir}`)
+  
+  const options = {
+    separateDirs: argv['separate-dirs'],
+    continueOnError: argv['continue-on-error'],
+    skipMissing: argv['skip-missing'],
+    createPlaceholders: argv['create-placeholders'],
+    verbose: argv.verbose,
+    quiet: argv.quiet,
+    logger: logger,
+  }
+  
+  try {
+    // If processing multiple files and separateDirs is enabled, use dumpMultipleFiles
+    // Otherwise, process files individually for better error reporting
+    if (inputs.length > 1 && options.separateDirs) {
+      const results = await dumpMultipleFiles(inputs, outputDir, argv.sourceRoot, options)
+      
+      // Output results
+      for (const [filepath, result] of Object.entries(results)) {
+        if (result.error) {
+          logger.error(`Error processing ${filepath}: ${result.error}`)
+        } else {
+          result.forEach(filepath => {
+            if (!options.quiet) {
+              logger.info(filepath)
+            }
+          })
+        }
+      }
+    } else {
+      // Process files individually
+      for (const input of inputs) {
+        const filepath = input === '-' ? '-' : input
+        try {
+          if (options.verbose) {
+            logger.info(`Processing: ${filepath}`)
+          }
+          const fileOptions = {
+            ...options,
+            isJsFile: argv.jsurl || (filepath.endsWith('.js') && !filepath.endsWith('.map'))
+          }
+          const writtenFiles = await dumpFile(filepath, outputDir, argv.sourceRoot, fileOptions)
+          writtenFiles.forEach(filepath => {
+            if (!options.quiet) {
+              logger.info(filepath)
+            }
+          })
+          if (options.verbose) {
+            logger.info(`Extracted ${writtenFiles.length} file(s) from ${filepath}`)
+          }
+        } catch (error) {
+          if (options.continueOnError) {
+            logger.error(`Error processing ${filepath}: ${error.message}`)
+          } else {
+            logger.error(`Error: ${error.message}`)
+            process.exit(1)
+          }
+        }
+      }
+    }
+    
+    if (argv.extractlinks) {
+      try {
+        if (options.verbose) {
+          logger.info('Scanning extracted files for URLs...')
+        }
+        const urls = await extractLinksFromDirectory(outputDir)
+        if (urls.length > 0) {
+          if (!options.quiet) {
+            logger.info('\n--- Extracted URLs ---')
+            urls.forEach(url => console.log(url))
+            logger.info(`\nTotal: ${urls.length} unique URL(s) found`)
+          }
+        } else {
+          logger.info('\nNo URLs found in extracted files.')
+        }
+      } catch (error) {
+        logger.error(`\nError extracting links: ${error.message}`)
+        process.exit(1)
+      }
+    }
+  } catch (error) {
+    logger.error(`Error: ${error.message}`)
+    if (options.verbose && error.stack) {
+      logger.debug(error.stack)
+    }
+    process.exit(1)
+  }
+}
+
+main().catch(error => {
+  const logger = createLogger(argv.verbose, argv.quiet)
+  logger.error(`Fatal error: ${error.message}`)
+  if ((error.stack && process.env.DEBUG) || argv.verbose) {
+    logger.debug(error.stack)
+  }
+  process.exit(1)
+})
+

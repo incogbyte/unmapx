@@ -564,6 +564,215 @@ function createLogger(verbose = false, quiet = false) {
   }
 }
 
+async function verifySourceMap(urlString) {
+  try {
+    const url = new URL(urlString)
+    const protocol = url.protocol === 'https:' ? https : http
+    const options = {
+      hostname: url.hostname,
+      port: url.port || (url.protocol === 'https:' ? 443 : 80),
+      path: url.pathname + url.search,
+      method: 'GET',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:144.0) Gecko/20100101 Firefox/144.0',
+        'Accept': '*/*',
+        'X-Tool': 'unmapx/incogbyte',
+      },
+    }
+    
+    return new Promise((resolve) => {
+      const req = protocol.request(options, (res) => {
+        // Check for X-SourceMap header first (faster check)
+        if (res.headers['x-sourcemap'] || res.headers['sourcemap']) {
+          req.destroy()
+          resolve(true)
+          return
+        }
+        
+        // If redirect, follow it
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          req.destroy()
+          return resolve(verifySourceMap(res.headers.location))
+        }
+        
+        if (res.statusCode !== 200) {
+          req.destroy()
+          resolve(false)
+          return
+        }
+        
+        // Download content to check for inline sourcemap
+        // Sourcemap comment is usually at the end, so we'll read the last portion
+        // For efficiency, we'll read chunks and keep only the last 128KB
+        const chunks = []
+        let totalLength = 0
+        const maxKeepLength = 131072 // 128KB - enough for sourcemap at end
+        
+        res.on('data', (chunk) => {
+          chunks.push(chunk)
+          totalLength += chunk.length
+          
+          // If we exceed the limit, remove old chunks but keep recent ones
+          if (totalLength > maxKeepLength) {
+            let removeLength = 0
+            while (chunks.length > 1 && totalLength - removeLength > maxKeepLength) {
+              const firstChunk = chunks.shift()
+              removeLength += firstChunk.length
+            }
+            totalLength -= removeLength
+          }
+        })
+        
+        res.on('end', () => {
+          try {
+            const content = Buffer.concat(chunks).toString('utf8')
+            const inlineUrl = extractInlineSourceMapUrl(content)
+            resolve(!!inlineUrl)
+          } catch (error) {
+            resolve(false)
+          }
+        })
+      })
+      
+      req.setTimeout(10000, () => {
+        req.destroy()
+        resolve(false)
+      })
+      
+      req.on('error', () => {
+        resolve(false)
+      })
+      
+      req.end()
+    })
+  } catch (error) {
+    return false
+  }
+}
+
+async function verifyMultipleUrls(urls) {
+  const results = await Promise.allSettled(
+    urls.map(async (url) => {
+      const hasSourceMap = await verifySourceMap(url.trim())
+      return { url: url.trim(), hasSourceMap }
+    })
+  )
+  
+  return results.map((result, index) => {
+    if (result.status === 'fulfilled') {
+      return result.value
+    } else {
+      return { url: urls[index].trim(), hasSourceMap: false, error: result.reason }
+    }
+  })
+}
+
+function extractDomainFromUrl(urlString) {
+  try {
+    const url = new URL(urlString)
+    // Remove port if present
+    return url.hostname
+  } catch (error) {
+    // Fallback: try to extract domain manually
+    const match = urlString.match(/https?:\/\/([^\/:]+)/)
+    return match ? match[1] : 'unknown'
+  }
+}
+
+async function downloadAllSourceMaps(urls, baseOutputDir, options = {}) {
+  const logger = options.logger || createLogger()
+  const results = []
+  
+  // Filter URLs that have sourcemaps
+  const urlsWithSourceMaps = urls.filter(url => {
+    const trimmed = url.trim()
+    return trimmed && (trimmed.startsWith('http://') || trimmed.startsWith('https://'))
+  })
+  
+  if (urlsWithSourceMaps.length === 0) {
+    logger.info('No URLs with source maps found to download')
+    return results
+  }
+  
+  // Verify which URLs have sourcemaps first
+  if (options.verbose) {
+    logger.info(`Verifying ${urlsWithSourceMaps.length} URL(s) for source maps...`)
+  }
+  
+  const verificationResults = await verifyMultipleUrls(urlsWithSourceMaps)
+  const urlsToDownload = verificationResults
+    .filter(result => result.hasSourceMap)
+    .map(result => result.url)
+  
+  if (urlsToDownload.length === 0) {
+    logger.info('No source maps found to download')
+    return results
+  }
+  
+  if (options.verbose) {
+    logger.info(`Found ${urlsToDownload.length} URL(s) with source maps. Starting download...`)
+  }
+  
+  // Group URLs by domain
+  const urlsByDomain = {}
+  for (const url of urlsToDownload) {
+    const domain = extractDomainFromUrl(url)
+    if (!urlsByDomain[domain]) {
+      urlsByDomain[domain] = []
+    }
+    urlsByDomain[domain].push(url)
+  }
+  
+  // Download and extract sourcemaps for each URL
+  const downloadPromises = urlsToDownload.map(async (url) => {
+    try {
+      const domain = extractDomainFromUrl(url)
+      const domainDir = path.join(baseOutputDir, domain)
+      
+      if (options.verbose) {
+        logger.info(`Downloading source map from: ${url}`)
+      }
+      
+      const fileOptions = {
+        ...options,
+        isJsFile: true,
+        continueOnError: true,
+      }
+      
+      const writtenFiles = await dumpFile(url, domainDir, undefined, fileOptions)
+      
+      return {
+        url,
+        domain,
+        success: true,
+        files: writtenFiles,
+      }
+    } catch (error) {
+      return {
+        url,
+        domain: extractDomainFromUrl(url),
+        success: false,
+        error: error.message,
+      }
+    }
+  })
+  
+  const downloadResults = await Promise.allSettled(downloadPromises)
+  
+  return downloadResults.map((result, index) => {
+    if (result.status === 'fulfilled') {
+      return result.value
+    } else {
+      return {
+        url: urlsToDownload[index],
+        domain: extractDomainFromUrl(urlsToDownload[index]),
+        success: false,
+        error: result.reason?.message || 'Unknown error',
+      }
+    }
+  })
+}
+
 module.exports = {
   dumpSource,
   dumpSourceMap,
@@ -580,4 +789,8 @@ module.exports = {
   extractLinksFromDirectory,
   sanitizeFilename,
   createLogger,
+  verifySourceMap,
+  verifyMultipleUrls,
+  extractDomainFromUrl,
+  downloadAllSourceMaps,
 }

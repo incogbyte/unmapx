@@ -21,6 +21,8 @@
 - **Multiple Source Map Formats**: Supports direct `.map` files, inline source maps, base64-encoded maps, and indexed source maps
 - **URL Downloads**: Download source maps from HTTP/HTTPS URLs with automatic format detection
 - **URL Extraction**: Extract and display all URLs found in extracted source files
+- **Source Map Verification**: Verify if JavaScript URLs contain source maps (bulk processing supported)
+- **Bulk Download**: Download and extract source maps from multiple URLs automatically
 - **Webpack/Rollup Compatible**: Handles format variations from different bundlers
 - **Flexible Output**: Organize output by source map or merge into single directory
 - **Developer Experience**: Verbose and quiet modes for different use cases
@@ -73,6 +75,8 @@ unmapx app.js.map lib.js.map utils.js.map
 | `--url` | | URL or path to source map file |
 | `--output` | `-o` | Output directory (default: current directory) |
 | `--sourceRoot` | | Override sourceRoot field in source map |
+| `--verify` | | Verify if JavaScript URLs contain source maps (reads from stdin or arguments) |
+| `--downloadall` | `-da` | Download and extract source maps from verified URLs (creates unmapx_output directory) |
 | `--extractlinks` | `-el` | Extract and display URLs found in extracted files |
 | `--verbose` | `-V` | Show detailed progress and debug information |
 | `--quiet` | `-q` | Suppress all output except errors |
@@ -176,6 +180,28 @@ unmapx --create-placeholders bundle.js.map
 ```bash
 echo '{"version":3,"sources":["app.js"],"mappings":""}' | unmapx -
 ```
+
+### Verify Source Maps in URLs
+
+**Verify if URLs contain source maps:**
+```bash
+# Verify single URL
+unmapx --verify https://example.com/test.js
+
+# Verify multiple URLs from file
+cat urls.txt | unmapx --verify
+
+# Verify and download all source maps found
+cat urls.txt | unmapx --verify --downloadall
+
+# Short form
+cat urls.txt | unmapx --verify -da
+```
+
+This will:
+1. Check each URL for source maps (checks HTTP headers and inline sourcemap comments)
+2. Display `[FOUND SM] <url>` for URLs that contain source maps
+3. If `--downloadall` is used, automatically download and extract all found source maps to `unmapx_output/` directory, organized by domain
 
 ## Advanced Features
 

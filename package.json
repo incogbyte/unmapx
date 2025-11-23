@@ -1,6 +1,6 @@
 {
   "name": "unmapx",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "description": "Extract and unpack JavaScript source maps from files, URLs, or inline base64. Supports indexed source maps, URL extraction.",
   "repository": "github:incogbyte/unmapx",
   "homepage": "https://github.com/incogbyte/unmapx",
