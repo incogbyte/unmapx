@@ -129,7 +129,9 @@ async function main() {
     }
     
     // If --downloadall is specified, download the sourcemaps
-    if (argv.downloadall || argv.da) {
+    // Check for --downloadall, -da (which minimist parses as -d and -a), or explicit argv.da
+    const shouldDownload = argv.downloadall || argv.da || (argv.d && argv.a)
+    if (shouldDownload) {
       if (urlsWithSourceMaps.length === 0) {
         logger.info('No source maps found to download')
         return

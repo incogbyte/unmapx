@@ -683,44 +683,19 @@ async function downloadAllSourceMaps(urls, baseOutputDir, options = {}) {
   const logger = options.logger || createLogger()
   const results = []
   
-  // Filter URLs that have sourcemaps
-  const urlsWithSourceMaps = urls.filter(url => {
+  // URLs are already verified, so we can use them directly
+  const urlsToDownload = urls.filter(url => {
     const trimmed = url.trim()
     return trimmed && (trimmed.startsWith('http://') || trimmed.startsWith('https://'))
   })
   
-  if (urlsWithSourceMaps.length === 0) {
-    logger.info('No URLs with source maps found to download')
-    return results
-  }
-  
-  // Verify which URLs have sourcemaps first
-  if (options.verbose) {
-    logger.info(`Verifying ${urlsWithSourceMaps.length} URL(s) for source maps...`)
-  }
-  
-  const verificationResults = await verifyMultipleUrls(urlsWithSourceMaps)
-  const urlsToDownload = verificationResults
-    .filter(result => result.hasSourceMap)
-    .map(result => result.url)
-  
   if (urlsToDownload.length === 0) {
-    logger.info('No source maps found to download')
+    logger.info('No URLs with source maps found to download')
     return results
   }
   
   if (options.verbose) {
     logger.info(`Found ${urlsToDownload.length} URL(s) with source maps. Starting download...`)
-  }
-  
-  // Group URLs by domain
-  const urlsByDomain = {}
-  for (const url of urlsToDownload) {
-    const domain = extractDomainFromUrl(url)
-    if (!urlsByDomain[domain]) {
-      urlsByDomain[domain] = []
-    }
-    urlsByDomain[domain].push(url)
   }
   
   // Download and extract sourcemaps for each URL
